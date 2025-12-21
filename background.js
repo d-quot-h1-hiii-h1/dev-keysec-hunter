@@ -209,7 +209,16 @@ async function checkHg(url) {
 }
 
 async function checkEnv(url) {
-  return checkExposedFile(url, "/.env", null, "^[A-Z_]+=|^[#\\n\\r ][\\s\\S]*^[A-Z_]+=");
+  const to_check = url + "/.env";
+  try {
+    const response = await fetch(to_check, { method: 'HEAD', redirect: 'manual' });
+    if (response.status !== 404) {
+      return { type: ".env", url: to_check };
+    }
+  } catch (error) {
+    // Ignore errors, e.g., network errors
+  }
+  return null;
 }
 
 async function checkDSStore(url) {
@@ -308,13 +317,14 @@ chrome.webNavigation.onCompleted.addListener(async details => {
     }
 
     // --- EXPOSED FILE SCANNING ---
+    const origin = new URL(url).origin;
     const checksToRun = [];
-    if (exposedFileChecks.git) checksToRun.push(checkGit(url));
-    if (exposedFileChecks.svn) checksToRun.push(checkSvn(url));
-    if (exposedFileChecks.hg) checksToRun.push(checkHg(url));
-    if (exposedFileChecks.env) checksToRun.push(checkEnv(url));
-    if (exposedFileChecks.ds_store) checksToRun.push(checkDSStore(url));
-    if (exposedFileChecks.securitytxt) checksToRun.push(checkSecurityTxt(url));
+    if (exposedFileChecks.git) checksToRun.push(checkGit(origin));
+    if (exposedFileChecks.svn) checksToRun.push(checkSvn(origin));
+    if (exposedFileChecks.hg) checksToRun.push(checkHg(origin));
+    if (exposedFileChecks.env) checksToRun.push(checkEnv(origin));
+    if (exposedFileChecks.ds_store) checksToRun.push(checkDSStore(origin));
+    if (exposedFileChecks.securitytxt) checksToRun.push(checkSecurityTxt(origin));
 
     const exposedFileResults = (await Promise.all(checksToRun)).filter(Boolean);
 
