@@ -240,6 +240,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   const checkDSStore = document.getElementById("checkDSStore");
   const checkSecurityTxt = document.getElementById("checkSecurityTxt");
 
+  const customFileInput = document.getElementById("customFile");
+  const addCustomFileBtn = document.getElementById("addCustomFile");
+  const customFilesListDiv = document.getElementById("customFilesList");
+
   if (tab.url && tab.url.startsWith("http")) {
     siteLabel.textContent = `Turn ON for: ${currentDomain}`;
   }
@@ -275,7 +279,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   // --- Settings save/load ---
-  chrome.storage.local.get(["keywords", "notifyMode", "maxLinks", "exposedFileChecks"], (data) => {
+  chrome.storage.local.get(["keywords", "notifyMode", "maxLinks", "exposedFileChecks", "customFiles"], (data) => {
     if (data.notifyMode) notifyModeSelect.value = data.notifyMode;
     if (data.maxLinks) maxLinksSelect.value = data.maxLinks;
 
@@ -287,6 +291,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       checkDSStore.checked = !!data.exposedFileChecks.ds_store;
       checkSecurityTxt.checked = !!data.exposedFileChecks.securitytxt;
     }
+
+    displayCustomFiles(data.customFiles || []);
   });
 
   saveBtn.addEventListener("click", () => {
@@ -321,6 +327,70 @@ document.addEventListener("DOMContentLoaded", async () => {
       });
     });
   });
+
+  // --- Custom Files ---
+  function displayCustomFiles(files) {
+    customFilesListDiv.innerHTML = "";
+    if (!files || files.length === 0) {
+      customFilesListDiv.textContent = "No custom files added.";
+      return;
+    }
+
+    const list = document.createElement("ul");
+    list.style.paddingLeft = "0";
+    list.style.listStyle = "none";
+
+    files.forEach((file) => {
+      const li = document.createElement("li");
+      li.style.display = "flex";
+      li.style.justifyContent = "space-between";
+      li.style.alignItems = "center";
+      li.style.marginBottom = "5px";
+      li.style.borderBottom = "1px solid #ccc";
+      li.style.padding = "2px 0";
+
+      const span = document.createElement("span");
+      span.textContent = file;
+
+      const delBtn = document.createElement("span");
+      delBtn.textContent = "X";
+      delBtn.style.color = "red";
+      delBtn.style.cursor = "pointer";
+      delBtn.style.marginLeft = "10px";
+      delBtn.style.fontWeight = "bold";
+      delBtn.title = "Delete file";
+
+      delBtn.addEventListener("click", () => {
+        const updatedFiles = files.filter(f => f !== file);
+        chrome.storage.local.set({ customFiles: updatedFiles }, () => {
+          displayCustomFiles(updatedFiles);
+        });
+      });
+
+      li.appendChild(span);
+      li.appendChild(delBtn);
+      list.appendChild(li);
+    });
+
+    customFilesListDiv.appendChild(list);
+  }
+
+  addCustomFileBtn.addEventListener("click", () => {
+    const newFile = customFileInput.value.trim();
+    if (newFile) {
+      chrome.storage.local.get(["customFiles"], (data) => {
+        let files = data.customFiles || [];
+        if (!files.includes(newFile)) {
+          files.push(newFile);
+          chrome.storage.local.set({ customFiles: files }, () => {
+            displayCustomFiles(files);
+            customFileInput.value = "";
+          });
+        }
+      });
+    }
+  });
+
 
   // --- Show/Remove Keywords ---
   function displayKeywords() {

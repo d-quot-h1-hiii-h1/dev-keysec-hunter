@@ -159,18 +159,12 @@ async function executeScan(tabId, scanType, patterns, maxLinks) {
 }
 
 // --- Exposed File Scanning ---
-async function checkExposedFile(url, path, header, search) {
+async function checkExposedFile(url, path) {
   const to_check = url + path;
   try {
-    const response = await fetch(to_check, { redirect: "manual" });
-    if (response.status === 200) {
-      const text = await response.text();
-      if (header && text.startsWith(header)) {
-        return { type: path.substring(1), url: to_check };
-      }
-      if (search && new RegExp(search).test(text)) {
-        return { type: path.substring(1), url: to_check };
-      }
+    const response = await fetch(to_check, { method: 'HEAD', redirect: 'manual' });
+    if (response.status !== 404) {
+      return { type: path.substring(1), url: to_check };
     }
   } catch (error) {
     // Ignore error
@@ -179,56 +173,29 @@ async function checkExposedFile(url, path, header, search) {
 }
 
 async function checkGit(url) {
-  return checkExposedFile(url, "/.git/HEAD", "ref: refs/heads/");
+  return checkExposedFile(url, "/.git/");
 }
 
 async function checkSvn(url) {
-  return checkExposedFile(url, "/.svn/wc.db", "SQLite");
+  return checkExposedFile(url, "/.svn/");
 }
 
 async function checkHg(url) {
-  const HG_MANIFEST_HEADERS = [
-    "\u0000\u0000\u0000\u0001",
-    "\u0000\u0001\u0000\u0001",
-    "\u0000\u0002\u0000\u0001",
-    "\u0000\u0003\u0000\u0001",
-  ];
-  const to_check = url + "/.hg/store/00manifest.i";
-  try {
-    const response = await fetch(to_check, { redirect: "manual" });
-    if (response.status === 200) {
-      const text = await response.text();
-      if (HG_MANIFEST_HEADERS.some(header => text.startsWith(header))) {
-        return { type: ".hg", url: to_check };
-      }
-    }
-  } catch (error) {
-    // Ignore error
-  }
-  return null;
+  return checkExposedFile(url, "/.hg/");
 }
 
 async function checkEnv(url) {
-  const to_check = url + "/.env";
-  try {
-    const response = await fetch(to_check, { method: 'HEAD', redirect: 'manual' });
-    if (response.status !== 404) {
-      return { type: ".env", url: to_check };
-    }
-  } catch (error) {
-    // Ignore errors, e.g., network errors
-  }
-  return null;
+  return checkExposedFile(url, "/.env");
 }
 
 async function checkDSStore(url) {
-  return checkExposedFile(url, "/.DS_Store", "\x00\x00\x00\x01Bud1");
+  return checkExposedFile(url, "/.DS_Store");
 }
 
 async function checkSecurityTxt(url) {
   const paths = ["/.well-known/security.txt", "/security.txt"];
   for (const path of paths) {
-    const result = await checkExposedFile(url, path, null, "Contact: ");
+    const result = await checkExposedFile(url, path);
     if (result) return result;
   }
   return null;
@@ -243,8 +210,8 @@ chrome.webNavigation.onCompleted.addListener(async details => {
   const url = details.url;
 
   try {
-    const data = await chrome.storage.local.get(["keywords", "notifyMode", "foundResults", "maxLinks", "activeSites", "exposedFileChecks"]);
-    const { keywords = [], notifyMode = "notification", maxLinks = "10", activeSites = {}, foundResults = [], exposedFileChecks = {} } = data;
+    const data = await chrome.storage.local.get(["keywords", "notifyMode", "foundResults", "maxLinks", "activeSites", "exposedFileChecks", "customFiles"]);
+    const { keywords = [], notifyMode = "notification", maxLinks = "10", activeSites = {}, foundResults = [], exposedFileChecks = {}, customFiles = [] } = data;
 
     if (!activeSites[domain]) {
       await chrome.storage.local.remove(`secretsFound_${domain}`);
@@ -325,6 +292,10 @@ chrome.webNavigation.onCompleted.addListener(async details => {
     if (exposedFileChecks.env) checksToRun.push(checkEnv(origin));
     if (exposedFileChecks.ds_store) checksToRun.push(checkDSStore(origin));
     if (exposedFileChecks.securitytxt) checksToRun.push(checkSecurityTxt(origin));
+
+    customFiles.forEach(file => {
+      checksToRun.push(checkExposedFile(origin, `/${file}`));
+    });
 
     const exposedFileResults = (await Promise.all(checksToRun)).filter(Boolean);
 
