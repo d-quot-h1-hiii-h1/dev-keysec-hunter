@@ -272,20 +272,11 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   // --- Settings save/load ---
-  chrome.storage.local.get(["keywords", "notifyMode", "maxLinks", "customFiles", "defaultPathsLoaded"], (data) => {
+  chrome.storage.local.get(["keywords", "notifyMode", "maxLinks", "customFiles"], (data) => {
     if (data.notifyMode) notifyModeSelect.value = data.notifyMode;
     if (data.maxLinks) maxLinksSelect.value = data.maxLinks;
 
-    let customFiles = data.customFiles || [];
-    if (!data.defaultPathsLoaded) {
-      const defaultPaths = ["/.git/", "/.svn/", "/.hg/", "/.env", "/.DS_Store", "/security.txt"];
-      customFiles = [...new Set([...defaultPaths, ...customFiles])];
-      chrome.storage.local.set({ customFiles: customFiles, defaultPathsLoaded: true }, () => {
-        displayCustomFiles(customFiles);
-      });
-    } else {
-      displayCustomFiles(customFiles);
-    }
+    displayCustomFiles(data.customFiles || []);
   });
 
   saveBtn.addEventListener("click", () => {

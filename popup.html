@@ -133,6 +133,12 @@
       text-decoration: underline;
     }
 
+    .settings-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+
     footer {
       margin-top: 15px;
       text-align: center;
@@ -192,34 +198,37 @@
   <!-- Settings Content -->
   <div id="settings" class="tab-content">
     <h2>KeySec Hunter - Settings</h2>
+    <div class="settings-grid">
+      <div>
+        <label>Add Keywords (comma separated):</label><br>
+        <input type="text" id="keywords" placeholder="e.g. password, token"><br><br>
 
-    <label>Add Keywords (comma separated):</label><br>
-    <input type="text" id="keywords" placeholder="e.g. password, token"><br><br>
+        <label>Max Links to Scan:</label><br>
+        <select id="maxLinks">
+          <option value="10">10</option>
+          <option value="20">20</option>
+          <option value="30">30</option>
+          <option value="all">All Internal Links</option>
+        </select><br><br>
 
-    <label>Max Links to Scan:</label><br>
-    <select id="maxLinks">
-      <option value="10">10</option>
-      <option value="20">20</option>
-      <option value="30">30</option>
-      <option value="all">All Internal Links</option>
-    </select><br><br>
+        <label>Notification Mode:</label><br>
+        <select id="notifyMode">
+          <option value="notification">Chrome Notification</option>
+          <option value="alert">Page Alert</option>
+          <option value="disabled">Disabled</option>
+        </select><br><br>
 
-    <label>Notification Mode:</label><br>
-    <select id="notifyMode">
-      <option value="notification">Chrome Notification</option>
-      <option value="alert">Page Alert</option>
-      <option value="disabled">Disabled</option>
-    </select><br><br>
-
-    <hr>
-    <h3>Custom File & Path Checks</h3>
-    <input type="text" id="customFile" placeholder="e.g. config.json, /admin/, /includes/db.php">
-    <button id="addCustomFile">Add</button>
-    <div id="customFilesList"></div>
-    <br>
-
-    <button id="save">Save Settings</button>
-    <p id="status"></p>
+        <button id="save">Save Settings</button>
+        <p id="status"></p>
+      </div>
+      <div>
+        <h3>Custom File & Path Checks</h3>
+        <input type="text" id="customFile" placeholder="e.g. config.json, /admin/, /includes/db.php">
+        <button id="addCustomFile">Add</button>
+        <div id="customFilesList"></div>
+        <br>
+      </div>
+    </div>
 
     <hr>
     <button id="showKeywords">Show Saved Keywords</button>
