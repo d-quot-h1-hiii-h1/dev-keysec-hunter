@@ -5,7 +5,7 @@
   <link rel="stylesheet" href="styles.css">
   <style>
     body {
-      width: 700px;
+      width: 900px;
       height: auto;
       font-family: Arial, sans-serif;
       overflow-x: hidden;
@@ -41,7 +41,7 @@
 
     .home-grid {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: 1fr 1fr 1fr;
       gap: 15px;
     }
 
@@ -159,7 +159,6 @@
   <!-- Tabs -->
   <div class="tabs">
     <div class="tab active" data-tab="home">Home</div>
-    <div class="tab" data-tab="exposed">Exposed Files</div>
     <div class="tab" data-tab="params">All Parameter Links</div>
     <div class="tab" data-tab="settings">Settings</div>
   </div>
@@ -175,24 +174,19 @@
     </div>
 
     <div class="home-grid">
-      <!-- Left Column -->
       <div class="column-box">
         <h3>Found Keyword Links</h3>
         <div id="results">Loading...</div>
       </div>
-
-      <!-- Right Column -->
       <div class="column-box">
         <h3>Secrets Found</h3>
         <div id="homeSecrets">Loading...</div>
       </div>
+      <div class="column-box">
+        <h3>Exposed Files</h3>
+        <div id="exposedFilesResults">No exposed files found yet.</div>
+      </div>
     </div>
-  </div>
-
-  <!-- Exposed Files Content -->
-  <div id="exposed" class="tab-content">
-    <h2>Exposed Files</h2>
-    <div id="exposedFilesResults">No exposed files found yet.</div>
   </div>
 
   <!-- Settings Content -->

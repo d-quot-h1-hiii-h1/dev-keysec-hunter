@@ -43,15 +43,23 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   });
 
-  // --- Deduplicate helper ---
-  function dedupeResults(arr) {
-    const seen = new Set();
-    return arr.filter(item => {
-      const key = `${item.url}|${item.keyword}|${item.lineNum}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
+  // --- Grouping helper for keywords ---
+  function groupKeywordResults(results) {
+    const grouped = {};
+    results.forEach(item => {
+      const key = `${item.keyword}|${item.url}`;
+      if (!grouped[key]) {
+        grouped[key] = {
+          keyword: item.keyword,
+          url: item.url,
+          lineNums: new Set(),
+          count: 0
+        };
+      }
+      grouped[key].lineNums.add(item.lineNum);
+      grouped[key].count++;
     });
+    return Object.values(grouped);
   }
 
   // --- Load Found Keyword Links (current site only) ---
@@ -70,15 +78,15 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
       });
 
-      const deduped = dedupeResults(found);
+      const groupedResults = groupKeywordResults(found);
 
-      if (deduped.length === 0) {
+      if (groupedResults.length === 0) {
         resultsDiv.textContent = "No keyword matches found yet.";
         return;
       }
 
       resultsDiv.innerHTML = "";
-      deduped.forEach(item => {
+      groupedResults.forEach(group => {
         const div = document.createElement("div");
         div.className = "keyword-item";
         div.style.marginBottom = "10px";
@@ -88,9 +96,9 @@ document.addEventListener("DOMContentLoaded", async () => {
         div.style.padding = "8px";
         div.style.boxShadow = "0 1px 3px rgba(0,0,0,0.1)";
         div.innerHTML = `
-          <b>${escapeHTML(item.keyword)}</b><br>
-          <a href="${escapeHTML(item.url)}" target="_blank">${escapeHTML(item.url)}</a><br>
-          <small>Line: ${item.lineNum}</small>
+          <b>${escapeHTML(group.keyword)}</b> (${group.count} appearances)<br>
+          <a href="${escapeHTML(group.url)}" target="_blank">${escapeHTML(group.url)}</a><br>
+          <small>Lines: ${[...group.lineNums].sort((a, b) => a - b).join(', ')}</small>
         `;
         resultsDiv.appendChild(div);
       });
@@ -220,6 +228,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   // --- Initial Load on Popup Open ---
   loadFoundLinks();
   loadHomeSecrets();
+  loadExposedFiles();
 
   // --- Settings + Toggles ---
   const keywordsInput = document.getElementById("keywords");
