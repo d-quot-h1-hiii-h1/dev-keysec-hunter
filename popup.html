@@ -152,7 +152,8 @@
 <body>
   <!-- Tabs -->
   <div class="tabs">
-    <div class="tab active" data-tab="home">Home</div>  
+    <div class="tab active" data-tab="home">Home</div>
+    <div class="tab" data-tab="exposed">Exposed Files</div>
     <div class="tab" data-tab="params">All Parameter Links</div>
     <div class="tab" data-tab="settings">Settings</div>
   </div>
@@ -182,6 +183,12 @@
     </div>
   </div>
 
+  <!-- Exposed Files Content -->
+  <div id="exposed" class="tab-content">
+    <h2>Exposed Files</h2>
+    <div id="exposedFilesResults">No exposed files found yet.</div>
+  </div>
+
   <!-- Settings Content -->
   <div id="settings" class="tab-content">
     <h2>KeySec Hunter - Settings</h2>
@@ -204,6 +211,16 @@
       <option value="disabled">Disabled</option>
     </select><br><br>
 
+    <hr>
+    <h3>Exposed File Checks</h3>
+    <label><input type="checkbox" id="checkGit"> Check for .git</label><br>
+    <label><input type="checkbox" id="checkSvn"> Check for .svn</label><br>
+    <label><input type="checkbox" id="checkHg"> Check for .hg</label><br>
+    <label><input type="checkbox" id="checkEnv"> Check for .env</label><br>
+    <label><input type="checkbox" id="checkDSStore"> Check for .DS_Store</label><br>
+    <label><input type="checkbox" id="checkSecurityTxt"> Check for security.txt</label><br>
+
+    <br>
     <button id="save">Save Settings</button>
     <p id="status"></p>
 
@@ -222,7 +239,7 @@
   </div>
 
   <footer>
-    <p><strong>KeySec Hunter</strong> - built by 
+    <p><strong>KeySec Hunter</strong> - built by
       <a href="https://x.com/dirtycoder0124" target="_blank">@dirtycoder0124</a>
     </p>
   </footer>

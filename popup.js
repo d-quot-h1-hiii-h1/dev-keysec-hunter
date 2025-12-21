@@ -3,6 +3,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   const tabContents = document.querySelectorAll(".tab-content");
   const linksWithParamsDiv = document.getElementById("linksWithParams");
   const resultsDiv = document.getElementById("results");
+  const exposedFilesResultsDiv = document.getElementById("exposedFilesResults");
 
   // --- Helper to escape HTML safely ---
   function escapeHTML(str) {
@@ -34,6 +35,9 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (target === "home") {
         loadFoundLinks();
         loadHomeSecrets();
+      }
+      if (target === "exposed") {
+        loadExposedFiles();
       }
       if (target === "params") fetchLinksWithParams();
     });
@@ -109,7 +113,6 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
       });
 
-      // Deduplicate secrets also
       const deduped = matches.filter(
         (v, i, a) =>
           a.findIndex(
@@ -138,15 +141,11 @@ document.addEventListener("DOMContentLoaded", async () => {
 
      let link = item.fileUrl || item.pageUrl || "#";
 		try {
-		  // If it's a relative path like /main.js or main.js
 		  const u = new URL(link, tab.url);
 		  link = u.href;
 		} catch {
-		  // fallback in case something breaks
 		  link = tab.url;
 		}
-
-
 
         html += `
           <div style="
@@ -186,20 +185,41 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
+  // --- Load Exposed Files ---
+  function loadExposedFiles() {
+    exposedFilesResultsDiv.innerHTML = "Loading...";
+    const domainKey = `exposedFiles_${currentDomain}`;
+
+    chrome.storage.local.get([domainKey], (data) => {
+      const findings = data[domainKey] || [];
+
+      if (findings.length === 0) {
+        exposedFilesResultsDiv.textContent = "No exposed files found yet.";
+        return;
+      }
+
+      exposedFilesResultsDiv.innerHTML = "";
+      findings.forEach(item => {
+        const div = document.createElement("div");
+        div.className = "exposed-item";
+        div.style.marginBottom = "10px";
+        div.style.background = "#fff";
+        div.style.border = "1px solid #ddd";
+        div.style.borderRadius = "8px";
+        div.style.padding = "8px";
+        div.style.boxShadow = "0 1px 3px rgba(0,0,0,0.1)";
+        div.innerHTML = `
+          <b>${escapeHTML(item.type.toUpperCase())}</b> found at:<br>
+          <a href="${escapeHTML(item.url)}" target="_blank">${escapeHTML(item.url)}</a>
+        `;
+        exposedFilesResultsDiv.appendChild(div);
+      });
+    });
+  }
+
   // --- Initial Load on Popup Open ---
   loadFoundLinks();
   loadHomeSecrets();
-
-  // --- Refresh Button ---
-  const refreshBtn = document.createElement("button");
-  refreshBtn.textContent = "🔄 Refresh";
-  refreshBtn.style.marginBottom = "10px";
-  refreshBtn.addEventListener("click", () => {
-    loadFoundLinks();
-    loadHomeSecrets();
-  });
-  const homeHeader = document.querySelector("#home h2");
-  if (homeHeader) homeHeader.insertAdjacentElement("afterend", refreshBtn);
 
   // --- Settings + Toggles ---
   const keywordsInput = document.getElementById("keywords");
@@ -213,6 +233,13 @@ document.addEventListener("DOMContentLoaded", async () => {
   const siteToggle = document.getElementById("siteToggle");
   const siteLabel = document.getElementById("siteLabel");
 
+  const checkGit = document.getElementById("checkGit");
+  const checkSvn = document.getElementById("checkSvn");
+  const checkHg = document.getElementById("checkHg");
+  const checkEnv = document.getElementById("checkEnv");
+  const checkDSStore = document.getElementById("checkDSStore");
+  const checkSecurityTxt = document.getElementById("checkSecurityTxt");
+
   if (tab.url && tab.url.startsWith("http")) {
     siteLabel.textContent = `Turn ON for: ${currentDomain}`;
   }
@@ -222,7 +249,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     siteToggle.checked = !!activeSites[currentDomain];
   });
 
-  // ✅ Toggle logic (fresh scan trigger)
   siteToggle.addEventListener("change", async () => {
     const { activeSites = {} } = await chrome.storage.local.get("activeSites");
 
@@ -249,15 +275,34 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   // --- Settings save/load ---
-  chrome.storage.local.get(["keywords", "notifyMode", "maxLinks"], (data) => {
+  chrome.storage.local.get(["keywords", "notifyMode", "maxLinks", "exposedFileChecks"], (data) => {
     if (data.notifyMode) notifyModeSelect.value = data.notifyMode;
     if (data.maxLinks) maxLinksSelect.value = data.maxLinks;
+
+    if (data.exposedFileChecks) {
+      checkGit.checked = !!data.exposedFileChecks.git;
+      checkSvn.checked = !!data.exposedFileChecks.svn;
+      checkHg.checked = !!data.exposedFileChecks.hg;
+      checkEnv.checked = !!data.exposedFileChecks.env;
+      checkDSStore.checked = !!data.exposedFileChecks.ds_store;
+      checkSecurityTxt.checked = !!data.exposedFileChecks.securitytxt;
+    }
   });
 
   saveBtn.addEventListener("click", () => {
     const newKeywords = keywordsInput.value
       ? keywordsInput.value.split(",").map(k => k.trim()).filter(Boolean)
       : [];
+
+    const exposedFileChecks = {
+      git: checkGit.checked,
+      svn: checkSvn.checked,
+      hg: checkHg.checked,
+      env: checkEnv.checked,
+      ds_store: checkDSStore.checked,
+      securitytxt: checkSecurityTxt.checked
+    };
+
     chrome.storage.local.get(["keywords"], (data) => {
       let keywords = data.keywords || [];
       newKeywords.forEach(k => {
@@ -266,7 +311,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       chrome.storage.local.set({
         keywords,
         notifyMode: notifyModeSelect.value,
-        maxLinks: maxLinksSelect.value
+        maxLinks: maxLinksSelect.value,
+        exposedFileChecks
       }, () => {
         status.textContent = "Settings saved!";
         status.className = "success";
@@ -326,20 +372,12 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // --- Clear All Found Links (current site only) ---
   clearAllBtn.addEventListener("click", () => {
-    chrome.storage.local.get(["foundResults"], (data) => {
-      const foundAll = data.foundResults || [];
-      const remaining = foundAll.filter(item => {
-        try {
-          return new URL(item.url).hostname !== currentDomain;
-        } catch {
-          return true;
-        }
-      });
-      chrome.storage.local.set({ foundResults: remaining }, () => {
-        resultsDiv.innerHTML = "";
-        status.textContent = "Cleared data for this site!";
-        setTimeout(() => (status.textContent = ""), 2000);
-      });
+    chrome.runtime.sendMessage({ cmd: "resetDomain", domain: currentDomain }, () => {
+      loadFoundLinks();
+      loadHomeSecrets();
+      loadExposedFiles();
+      status.textContent = "Cleared data for this site!";
+      setTimeout(() => (status.textContent = ""), 2000);
     });
   });
 
@@ -379,6 +417,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // --- Live auto-refresh ---
   chrome.storage.onChanged.addListener((changes) => {
-    if (changes.foundResults) loadFoundLinks();
+    const domainKey = `exposedFiles_${currentDomain}`;
+    if (changes.foundResults || changes[domainKey]) {
+      loadFoundLinks();
+      loadExposedFiles();
+    }
   });
 });

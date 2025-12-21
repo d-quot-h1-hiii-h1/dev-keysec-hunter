@@ -158,19 +158,88 @@ async function executeScan(tabId, scanType, patterns, maxLinks) {
   }
 }
 
+// --- Exposed File Scanning ---
+async function checkExposedFile(url, path, header, search) {
+  const to_check = url + path;
+  try {
+    const response = await fetch(to_check, { redirect: "manual" });
+    if (response.status === 200) {
+      const text = await response.text();
+      if (header && text.startsWith(header)) {
+        return { type: path.substring(1), url: to_check };
+      }
+      if (search && new RegExp(search).test(text)) {
+        return { type: path.substring(1), url: to_check };
+      }
+    }
+  } catch (error) {
+    // Ignore error
+  }
+  return null;
+}
+
+async function checkGit(url) {
+  return checkExposedFile(url, "/.git/HEAD", "ref: refs/heads/");
+}
+
+async function checkSvn(url) {
+  return checkExposedFile(url, "/.svn/wc.db", "SQLite");
+}
+
+async function checkHg(url) {
+  const HG_MANIFEST_HEADERS = [
+    "\u0000\u0000\u0000\u0001",
+    "\u0000\u0001\u0000\u0001",
+    "\u0000\u0002\u0000\u0001",
+    "\u0000\u0003\u0000\u0001",
+  ];
+  const to_check = url + "/.hg/store/00manifest.i";
+  try {
+    const response = await fetch(to_check, { redirect: "manual" });
+    if (response.status === 200) {
+      const text = await response.text();
+      if (HG_MANIFEST_HEADERS.some(header => text.startsWith(header))) {
+        return { type: ".hg", url: to_check };
+      }
+    }
+  } catch (error) {
+    // Ignore error
+  }
+  return null;
+}
+
+async function checkEnv(url) {
+  return checkExposedFile(url, "/.env", null, "^[A-Z_]+=|^[#\\n\\r ][\\s\\S]*^[A-Z_]+=");
+}
+
+async function checkDSStore(url) {
+  return checkExposedFile(url, "/.DS_Store", "\x00\x00\x00\x01Bud1");
+}
+
+async function checkSecurityTxt(url) {
+  const paths = ["/.well-known/security.txt", "/security.txt"];
+  for (const path of paths) {
+    const result = await checkExposedFile(url, path, null, "Contact: ");
+    if (result) return result;
+  }
+  return null;
+}
+
 // --- Main scanning trigger ---
 chrome.webNavigation.onCompleted.addListener(async details => {
   if (details.frameId !== 0 || !details.url.startsWith("http")) return;
 
   const domain = new URL(details.url).hostname;
   const tabId = details.tabId;
+  const url = details.url;
 
   try {
-    const data = await chrome.storage.local.get(["keywords", "notifyMode", "foundResults", "maxLinks", "activeSites"]);
-    const { keywords = [], notifyMode = "notification", maxLinks = "10", activeSites = {}, foundResults = [] } = data;
+    const data = await chrome.storage.local.get(["keywords", "notifyMode", "foundResults", "maxLinks", "activeSites", "exposedFileChecks"]);
+    const { keywords = [], notifyMode = "notification", maxLinks = "10", activeSites = {}, foundResults = [], exposedFileChecks = {} } = data;
 
     if (!activeSites[domain]) {
       await chrome.storage.local.remove(`secretsFound_${domain}`);
+      await chrome.storage.local.remove(`exposedFiles_${domain}`);
       return;
     }
 
@@ -203,40 +272,79 @@ chrome.webNavigation.onCompleted.addListener(async details => {
     }
 
     // --- SECRET SCANNING ---
-    if (isScanned(domain, tabId)) return;
+    if (!isScanned(domain, tabId)) {
+      const regexEntries = await loadRegexList();
+      const secretMatches = await executeScan(tabId, 'secret', regexEntries, maxLinks);
 
-    const regexEntries = await loadRegexList();
-    const secretMatches = await executeScan(tabId, 'secret', regexEntries, maxLinks);
+      if (secretMatches.length > 0) {
+        const dedupedSecrets = dedupeAndMerge([], secretMatches);
+        const domainKey = `secretsFound_${domain}`;
+        const { [domainKey]: oldSecrets = [] } = await chrome.storage.local.get(domainKey);
 
-    if (secretMatches.length > 0) {
-      const dedupedSecrets = dedupeAndMerge([], secretMatches);
-      const domainKey = `secretsFound_${domain}`;
-      const { [domainKey]: oldSecrets = [] } = await chrome.storage.local.get(domainKey);
+        const uniqueNewSecrets = dedupedSecrets.filter(f =>
+          !oldSecrets.some(o => o.name === f.name && o.match === f.match && o.fileUrl === f.fileUrl)
+        );
 
-      const uniqueNewSecrets = dedupedSecrets.filter(f =>
-        !oldSecrets.some(o => o.name === f.name && o.match === f.match && o.fileUrl === f.fileUrl)
-      );
+        const mergedSecrets = dedupeAndMerge(oldSecrets, dedupedSecrets);
+        await chrome.storage.local.set({ [domainKey]: mergedSecrets });
 
-      const mergedSecrets = dedupeAndMerge(oldSecrets, dedupedSecrets);
-      await chrome.storage.local.set({ [domainKey]: mergedSecrets });
-
-      const newCount = uniqueNewSecrets.length;
-      if (newCount > 0) {
-        const msg = `${newCount} new unique secret(s) found on ${domain}`;
-        if (notifyMode === "notification") {
-          chrome.notifications.create({
-            type: "basic", iconUrl: "icon.png", title: "🔑 Secrets Found",
-            message: msg, priority: 2,
-          });
-        } else if (notifyMode === "alert") {
-          chrome.scripting.executeScript({
-            target: { tabId },
-            func: msg => alert(msg),
-            args: [msg],
-          });
+        const newCount = uniqueNewSecrets.length;
+        if (newCount > 0) {
+          const msg = `${newCount} new unique secret(s) found on ${domain}`;
+          if (notifyMode === "notification") {
+            chrome.notifications.create({
+              type: "basic", iconUrl: "icon.png", title: "🔑 Secrets Found",
+              message: msg, priority: 2,
+            });
+          } else if (notifyMode === "alert") {
+            chrome.scripting.executeScript({
+              target: { tabId },
+              func: msg => alert(msg),
+              args: [msg],
+            });
+          }
         }
       }
     }
+
+    // --- EXPOSED FILE SCANNING ---
+    const checksToRun = [];
+    if (exposedFileChecks.git) checksToRun.push(checkGit(url));
+    if (exposedFileChecks.svn) checksToRun.push(checkSvn(url));
+    if (exposedFileChecks.hg) checksToRun.push(checkHg(url));
+    if (exposedFileChecks.env) checksToRun.push(checkEnv(url));
+    if (exposedFileChecks.ds_store) checksToRun.push(checkDSStore(url));
+    if (exposedFileChecks.securitytxt) checksToRun.push(checkSecurityTxt(url));
+
+    const exposedFileResults = (await Promise.all(checksToRun)).filter(Boolean);
+
+    if (exposedFileResults.length > 0) {
+      const domainKey = `exposedFiles_${domain}`;
+      const { [domainKey]: oldExposedFiles = [] } = await chrome.storage.local.get(domainKey);
+      const newExposedFiles = exposedFileResults.filter(f => !oldExposedFiles.some(o => o.url === f.url));
+
+      if (newExposedFiles.length > 0) {
+        const mergedExposedFiles = [...oldExposedFiles, ...newExposedFiles];
+        await chrome.storage.local.set({ [domainKey]: mergedExposedFiles });
+
+        if (notifyMode !== "disabled") {
+          const msg = `${newExposedFiles.length} new exposed file(s) found on ${domain}`;
+          if (notifyMode === "notification") {
+            chrome.notifications.create({
+              type: "basic", iconUrl: "icon.png", title: "📁 Exposed Files Found",
+              message: msg, priority: 2,
+            });
+          } else if (notifyMode === "alert") {
+            chrome.scripting.executeScript({
+              target: { tabId },
+              func: msg => alert(msg),
+              args: [msg],
+            });
+          }
+        }
+      }
+    }
+
     markScanned(domain, tabId);
 
   } catch (err) {
@@ -249,7 +357,8 @@ function resetDomainScan(domain) {
   scannedMap.delete(domain);
   const secretsKey = `secretsFound_${domain}`;
   const keywordsKey = `keywordsFound_${domain}`;
-  chrome.storage.local.remove([secretsKey, keywordsKey]);
+  const exposedFilesKey = `exposedFiles_${domain}`;
+  chrome.storage.local.remove([secretsKey, keywordsKey, exposedFilesKey]);
 
   chrome.storage.local.get("foundResults", d => {
     const filtered = (d.foundResults || []).filter(f => {
