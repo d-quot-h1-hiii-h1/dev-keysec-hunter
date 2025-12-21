@@ -172,35 +172,6 @@ async function checkExposedFile(url, path) {
   return null;
 }
 
-async function checkGit(url) {
-  return checkExposedFile(url, "/.git/");
-}
-
-async function checkSvn(url) {
-  return checkExposedFile(url, "/.svn/");
-}
-
-async function checkHg(url) {
-  return checkExposedFile(url, "/.hg/");
-}
-
-async function checkEnv(url) {
-  return checkExposedFile(url, "/.env");
-}
-
-async function checkDSStore(url) {
-  return checkExposedFile(url, "/.DS_Store");
-}
-
-async function checkSecurityTxt(url) {
-  const paths = ["/.well-known/security.txt", "/security.txt"];
-  for (const path of paths) {
-    const result = await checkExposedFile(url, path);
-    if (result) return result;
-  }
-  return null;
-}
-
 // --- Main scanning trigger ---
 chrome.webNavigation.onCompleted.addListener(async details => {
   if (details.frameId !== 0 || !details.url.startsWith("http")) return;
@@ -210,8 +181,8 @@ chrome.webNavigation.onCompleted.addListener(async details => {
   const url = details.url;
 
   try {
-    const data = await chrome.storage.local.get(["keywords", "notifyMode", "foundResults", "maxLinks", "activeSites", "exposedFileChecks", "customFiles"]);
-    const { keywords = [], notifyMode = "notification", maxLinks = "10", activeSites = {}, foundResults = [], exposedFileChecks = {}, customFiles = [] } = data;
+    const data = await chrome.storage.local.get(["keywords", "notifyMode", "foundResults", "maxLinks", "activeSites", "customFiles"]);
+    const { keywords = [], notifyMode = "notification", maxLinks = "10", activeSites = {}, foundResults = [], customFiles = [] } = data;
 
     if (!activeSites[domain]) {
       await chrome.storage.local.remove(`secretsFound_${domain}`);
@@ -286,15 +257,10 @@ chrome.webNavigation.onCompleted.addListener(async details => {
     // --- EXPOSED FILE SCANNING ---
     const origin = new URL(url).origin;
     const checksToRun = [];
-    if (exposedFileChecks.git) checksToRun.push(checkGit(origin));
-    if (exposedFileChecks.svn) checksToRun.push(checkSvn(origin));
-    if (exposedFileChecks.hg) checksToRun.push(checkHg(origin));
-    if (exposedFileChecks.env) checksToRun.push(checkEnv(origin));
-    if (exposedFileChecks.ds_store) checksToRun.push(checkDSStore(origin));
-    if (exposedFileChecks.securitytxt) checksToRun.push(checkSecurityTxt(origin));
 
     customFiles.forEach(file => {
-      checksToRun.push(checkExposedFile(origin, `/${file}`));
+      const path = file.startsWith('/') ? file : `/${file}`;
+      checksToRun.push(checkExposedFile(origin, path));
     });
 
     const exposedFileResults = (await Promise.all(checksToRun)).filter(Boolean);

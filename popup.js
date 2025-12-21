@@ -233,13 +233,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   const siteToggle = document.getElementById("siteToggle");
   const siteLabel = document.getElementById("siteLabel");
 
-  const checkGit = document.getElementById("checkGit");
-  const checkSvn = document.getElementById("checkSvn");
-  const checkHg = document.getElementById("checkHg");
-  const checkEnv = document.getElementById("checkEnv");
-  const checkDSStore = document.getElementById("checkDSStore");
-  const checkSecurityTxt = document.getElementById("checkSecurityTxt");
-
   const customFileInput = document.getElementById("customFile");
   const addCustomFileBtn = document.getElementById("addCustomFile");
   const customFilesListDiv = document.getElementById("customFilesList");
@@ -279,35 +272,26 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   // --- Settings save/load ---
-  chrome.storage.local.get(["keywords", "notifyMode", "maxLinks", "exposedFileChecks", "customFiles"], (data) => {
+  chrome.storage.local.get(["keywords", "notifyMode", "maxLinks", "customFiles", "defaultPathsLoaded"], (data) => {
     if (data.notifyMode) notifyModeSelect.value = data.notifyMode;
     if (data.maxLinks) maxLinksSelect.value = data.maxLinks;
 
-    if (data.exposedFileChecks) {
-      checkGit.checked = !!data.exposedFileChecks.git;
-      checkSvn.checked = !!data.exposedFileChecks.svn;
-      checkHg.checked = !!data.exposedFileChecks.hg;
-      checkEnv.checked = !!data.exposedFileChecks.env;
-      checkDSStore.checked = !!data.exposedFileChecks.ds_store;
-      checkSecurityTxt.checked = !!data.exposedFileChecks.securitytxt;
+    let customFiles = data.customFiles || [];
+    if (!data.defaultPathsLoaded) {
+      const defaultPaths = ["/.git/", "/.svn/", "/.hg/", "/.env", "/.DS_Store", "/security.txt"];
+      customFiles = [...new Set([...defaultPaths, ...customFiles])];
+      chrome.storage.local.set({ customFiles: customFiles, defaultPathsLoaded: true }, () => {
+        displayCustomFiles(customFiles);
+      });
+    } else {
+      displayCustomFiles(customFiles);
     }
-
-    displayCustomFiles(data.customFiles || []);
   });
 
   saveBtn.addEventListener("click", () => {
     const newKeywords = keywordsInput.value
       ? keywordsInput.value.split(",").map(k => k.trim()).filter(Boolean)
       : [];
-
-    const exposedFileChecks = {
-      git: checkGit.checked,
-      svn: checkSvn.checked,
-      hg: checkHg.checked,
-      env: checkEnv.checked,
-      ds_store: checkDSStore.checked,
-      securitytxt: checkSecurityTxt.checked
-    };
 
     chrome.storage.local.get(["keywords"], (data) => {
       let keywords = data.keywords || [];
@@ -317,8 +301,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       chrome.storage.local.set({
         keywords,
         notifyMode: notifyModeSelect.value,
-        maxLinks: maxLinksSelect.value,
-        exposedFileChecks
+        maxLinks: maxLinksSelect.value
       }, () => {
         status.textContent = "Settings saved!";
         status.className = "success";
