@@ -5,7 +5,7 @@
   <link rel="stylesheet" href="styles.css">
   <style>
     body {
-      width: 900px;
+      width: 600px;
       height: auto;
       font-family: Arial, sans-serif;
       overflow-x: hidden;
@@ -41,7 +41,7 @@
 
     .home-grid {
       display: grid;
-      grid-template-columns: 1fr 1fr 1fr;
+      grid-template-columns: 1fr 1fr;
       gap: 15px;
     }
 
@@ -178,13 +178,15 @@
         <h3>Found Keyword Links</h3>
         <div id="results">Loading...</div>
       </div>
-      <div class="column-box">
-        <h3>Secrets Found</h3>
-        <div id="homeSecrets">Loading...</div>
-      </div>
-      <div class="column-box">
-        <h3>Exposed Files</h3>
-        <div id="exposedFilesResults">No exposed files found yet.</div>
+      <div>
+        <div class="column-box">
+          <h3>Secrets Found</h3>
+          <div id="homeSecrets">Loading...</div>
+        </div>
+        <div class="column-box" style="margin-top: 15px;">
+          <h3>Exposed Files</h3>
+          <div id="exposedFilesResults">No exposed files found yet.</div>
+        </div>
       </div>
     </div>
   </div>
