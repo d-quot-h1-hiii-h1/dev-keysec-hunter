@@ -5,7 +5,7 @@
   <link rel="stylesheet" href="styles.css">
   <style>
     body {
-      width: 700px;
+      width: 900px;
       height: auto;
       font-family: Arial, sans-serif;
       overflow-x: hidden;
@@ -41,7 +41,7 @@
 
     .home-grid {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: 1fr 1fr 1fr;
       gap: 15px;
     }
 
@@ -178,6 +178,12 @@
       <div class="column-box">
         <h3>Secrets Found</h3>
         <div id="homeSecrets">Loading...</div>
+      </div>
+
+      <!-- SSTI Column -->
+      <div class="column-box">
+        <h3>SSTI vulnerabilities Found</h3>
+        <div id="sstiResults">Loading...</div>
       </div>
     </div>
   </div>

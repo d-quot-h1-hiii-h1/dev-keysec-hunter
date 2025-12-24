@@ -34,6 +34,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (target === "home") {
         loadFoundLinks();
         loadHomeSecrets();
+        loadSstiResults();
       }
       if (target === "params") fetchLinksWithParams();
     });
@@ -186,9 +187,34 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
+  // --- Load SSTI Results ---
+  function loadSstiResults() {
+    const sstiDiv = document.getElementById("sstiResults");
+    sstiDiv.innerHTML = "Loading...";
+    const domainKey = `sstiFound_${currentDomain}`;
+    chrome.storage.local.get([domainKey], (data) => {
+      const matches = data[domainKey] || [];
+      if (matches.length === 0) {
+        sstiDiv.textContent = "No SSTI vulnerabilities found yet.";
+        return;
+      }
+      let html = "";
+      for (const item of matches) {
+        html += `
+          <div style="margin-bottom: 10px; border-bottom: 1px solid #eee; padding-bottom: 5px;">
+            <b>${escapeHTML(item.name)}</b><br>
+            <a href="${escapeHTML(item.url)}" target="_blank">${escapeHTML(item.url)}</a>
+          </div>
+        `;
+      }
+      sstiDiv.innerHTML = html;
+    });
+  }
+
   // --- Initial Load on Popup Open ---
   loadFoundLinks();
   loadHomeSecrets();
+  loadSstiResults();
 
   // --- Refresh Button ---
   const refreshBtn = document.createElement("button");
@@ -197,6 +223,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   refreshBtn.addEventListener("click", () => {
     loadFoundLinks();
     loadHomeSecrets();
+    loadSstiResults();
   });
   const homeHeader = document.querySelector("#home h2");
   if (homeHeader) homeHeader.insertAdjacentElement("afterend", refreshBtn);

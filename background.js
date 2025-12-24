@@ -23,6 +23,18 @@ async function loadRegexList() {
   }
 }
 
+// --- Load SSTI payloads ---
+async function loadSstiPayloads() {
+  try {
+    const url = chrome.runtime.getURL("ssti_payloads.json");
+    const r = await fetch(url);
+    return await r.json();
+  } catch (err) {
+    console.error("Failed to fetch ssti_payloads.json", err);
+    return [];
+  }
+}
+
 // --- Deduplicate found results (merge helper) ---
 function dedupeAndMerge(prev = [], found = []) {
   const out = prev.slice();
@@ -32,6 +44,19 @@ function dedupeAndMerge(prev = [], found = []) {
       p.match === f.match &&
       p.pageUrl === f.pageUrl &&
       p.fileUrl === f.fileUrl
+    );
+    if (!exists) out.push(f);
+  }
+  return out;
+}
+
+// --- Deduplicate SSTI results ---
+function dedupeSsti(prev = [], found = []) {
+  const out = prev.slice();
+  for (const f of found) {
+    const exists = out.some(p =>
+      p.name === f.name &&
+      p.url === f.url
     );
     if (!exists) out.push(f);
   }
@@ -350,6 +375,89 @@ try {
       console.error("Secret scan error:", err);
       markScanned(domain, tabId);
     }
+
+    // --- SSTI SCANNING (refactored) ---
+    try {
+      const sstiPayloads = await loadSstiPayloads();
+      if (!sstiPayloads.length) return;
+
+      const [{ result: sstiScanResult }] = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: async (payloads, maxLinksArg) => {
+          const results = [];
+          const visited = new Set();
+          const toVisit = [location.href];
+          const limit = maxLinksArg === "all" ? 1000 : parseInt(maxLinksArg, 10) || 10;
+
+          function extractLinks(html, baseUrl) {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, "text/html");
+            return Array.from(doc.querySelectorAll("a[href]"))
+              .map(a => {
+                try { return new URL(a.href, baseUrl).href; } catch { return null; }
+              })
+              .filter(Boolean)
+              .filter(u => u.startsWith(location.origin));
+          }
+
+          async function checkUrl(url, payload) {
+            try {
+              const urlObj = new URL(url);
+              if (!urlObj.search) return; // Skip URLs with no parameters
+
+              for (const param of urlObj.searchParams.keys()) {
+                const testUrl = new URL(url);
+                testUrl.searchParams.set(param, payload.payload);
+
+                const res = await fetch(testUrl.href);
+                const text = await res.text();
+
+                if (text.includes(payload.output)) {
+                  results.push({ name: payload.name, url: testUrl.href });
+                }
+                await new Promise(resolve => setTimeout(resolve, 100)); // Be nice to the server
+              }
+            } catch (e) {
+              console.warn(`SSTI check failed for ${url}:`, e);
+            }
+          }
+
+          while (toVisit.length > 0 && visited.size < limit) {
+            const currentUrl = toVisit.shift();
+            if (visited.has(currentUrl)) continue;
+            visited.add(currentUrl);
+
+            for (const payload of payloads) {
+              await checkUrl(currentUrl, payload);
+            }
+
+            const html = await fetch(currentUrl).then(res => res.text()).catch(() => "");
+            if (html) {
+              const newLinks = extractLinks(html, currentUrl);
+              for (const link of newLinks) {
+                if (!visited.has(link) && !toVisit.includes(link)) {
+                  toVisit.push(link);
+                }
+              }
+            }
+          }
+          return results;
+        },
+        args: [sstiPayloads, maxLinks]
+      });
+
+      if (Array.isArray(sstiScanResult) && sstiScanResult.length > 0) {
+        const domainKey = `sstiFound_${domain}`;
+        const prevData = await new Promise(res => chrome.storage.local.get(domainKey, res));
+        const oldSsti = prevData[domainKey] || [];
+        const mergedSsti = dedupeSsti(oldSsti, sstiScanResult);
+        await chrome.storage.local.set({ [domainKey]: mergedSsti });
+      }
+
+    } catch (err) {
+      console.error("SSTI scan error:", err);
+    }
+
   } catch (err) {
     console.error("background onCompleted error:", err);
   }
@@ -360,7 +468,8 @@ function resetDomainScan(domain) {
   if (scannedMap.has(domain)) scannedMap.delete(domain);
   const domainKey = `secretsFound_${domain}`;
   const keyKw = `keywordsFound_${domain}`;
-  chrome.storage.local.remove([domainKey, keyKw]);
+  const sstiKey = `sstiFound_${domain}`;
+  chrome.storage.local.remove([domainKey, keyKw, sstiKey]);
   chrome.storage.local.get(["foundResults"], d => {
     const found = d.foundResults || [];
     const filtered = found.filter(f => {
