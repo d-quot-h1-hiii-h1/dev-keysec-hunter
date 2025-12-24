@@ -5,7 +5,7 @@
   <link rel="stylesheet" href="styles.css">
   <style>
     body {
-      width: 900px;
+      width: 700px;
       height: auto;
       font-family: Arial, sans-serif;
       overflow-x: hidden;
@@ -41,7 +41,7 @@
 
     .home-grid {
       display: grid;
-      grid-template-columns: 1fr 1fr 1fr;
+      grid-template-columns: 1fr 1fr;
       gap: 15px;
     }
 
@@ -152,7 +152,7 @@
 <body>
   <!-- Tabs -->
   <div class="tabs">
-    <div class="tab active" data-tab="home">Home</div>  
+    <div class="tab active" data-tab="home">Home</div>
     <div class="tab" data-tab="params">All Parameter Links</div>
     <div class="tab" data-tab="settings">Settings</div>
   </div>
@@ -167,6 +167,11 @@
       <span id="siteLabel" class="site-label"></span>
     </div>
 
+    <div id="tech-info">
+      <h4>Detected Technology</h4>
+      <div id="tech-results">Detecting...</div>
+    </div>
+
     <div class="home-grid">
       <!-- Left Column -->
       <div class="column-box">
@@ -178,12 +183,6 @@
       <div class="column-box">
         <h3>Secrets Found</h3>
         <div id="homeSecrets">Loading...</div>
-      </div>
-
-      <!-- SSTI Column -->
-      <div class="column-box">
-        <h3>SSTI vulnerabilities Found</h3>
-        <div id="sstiResults">Loading...</div>
       </div>
     </div>
   </div>
@@ -228,7 +227,7 @@
   </div>
 
   <footer>
-    <p><strong>KeySec Hunter</strong> - built by 
+    <p><strong>KeySec Hunter</strong> - built by
       <a href="https://x.com/dirtycoder0124" target="_blank">@dirtycoder0124</a>
     </p>
   </footer>

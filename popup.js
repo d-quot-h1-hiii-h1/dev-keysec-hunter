@@ -34,7 +34,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (target === "home") {
         loadFoundLinks();
         loadHomeSecrets();
-        loadSstiResults();
+        loadTechResults();
       }
       if (target === "params") fetchLinksWithParams();
     });
@@ -187,34 +187,35 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
-  // --- Load SSTI Results ---
-  function loadSstiResults() {
-    const sstiDiv = document.getElementById("sstiResults");
-    sstiDiv.innerHTML = "Loading...";
-    const domainKey = `sstiFound_${currentDomain}`;
+  // --- Load Detected Technology ---
+  function loadTechResults() {
+    const techDiv = document.getElementById("tech-results");
+    techDiv.innerHTML = "Detecting...";
+    const domainKey = `techFound_${currentDomain}`;
     chrome.storage.local.get([domainKey], (data) => {
       const matches = data[domainKey] || [];
       if (matches.length === 0) {
-        sstiDiv.textContent = "No SSTI vulnerabilities found yet.";
+        techDiv.textContent = "No specific technology detected.";
         return;
       }
       let html = "";
       for (const item of matches) {
         html += `
-          <div style="margin-bottom: 10px; border-bottom: 1px solid #eee; padding-bottom: 5px;">
-            <b>${escapeHTML(item.name)}</b><br>
-            <a href="${escapeHTML(item.url)}" target="_blank">${escapeHTML(item.url)}</a>
+          <div>
+            <b>Technology:</b> ${escapeHTML(item.name)}<br>
+            <b>Template Engine:</b> ${escapeHTML(item.engine)}<br>
+            <b>SSTI Possible! Try Payload:</b> <code>${escapeHTML(item.payload)}</code>
           </div>
         `;
       }
-      sstiDiv.innerHTML = html;
+      techDiv.innerHTML = html;
     });
   }
 
   // --- Initial Load on Popup Open ---
   loadFoundLinks();
   loadHomeSecrets();
-  loadSstiResults();
+  loadTechResults();
 
   // --- Refresh Button ---
   const refreshBtn = document.createElement("button");
@@ -223,7 +224,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   refreshBtn.addEventListener("click", () => {
     loadFoundLinks();
     loadHomeSecrets();
-    loadSstiResults();
+    loadTechResults();
   });
   const homeHeader = document.querySelector("#home h2");
   if (homeHeader) homeHeader.insertAdjacentElement("afterend", refreshBtn);

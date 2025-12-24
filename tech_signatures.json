@@ -1,0 +1,50 @@
+[
+  {
+    "name": "Jinja2 (Flask)",
+    "type": "header",
+    "header": "Server",
+    "pattern": "Werkzeug",
+    "payload": "{{7*7}}",
+    "engine": "Jinja2"
+  },
+  {
+    "name": "Django",
+    "type": "cookie",
+    "cookie": "csrftoken",
+    "pattern": ".*",
+    "payload": "{{7*7}}",
+    "engine": "Django Templates"
+  },
+  {
+    "name": "PHP (Symfony)",
+    "type": "header",
+    "header": "X-Powered-By",
+    "pattern": "Symfony",
+    "payload": "{{7*7}}",
+    "engine": "Twig"
+  },
+  {
+    "name": "PHP (Laravel)",
+    "type": "cookie",
+    "cookie": "laravel_session",
+    "pattern": ".*",
+    "payload": "{{7*7}}",
+    "engine": "Blade"
+  },
+  {
+    "name": "ASP.NET",
+    "type": "header",
+    "header": "X-Powered-By",
+    "pattern": "ASP.NET",
+    "payload": "@(7*7)",
+    "engine": "Razor"
+  },
+  {
+    "name": "Ruby on Rails",
+    "type": "header",
+    "header": "X-Powered-By",
+    "pattern": "Phusion Passenger",
+    "payload": "<%= 7*7 %>",
+    "engine": "ERB"
+  }
+]
