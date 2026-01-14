@@ -3,6 +3,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   const tabContents = document.querySelectorAll(".tab-content");
   const linksWithParamsDiv = document.getElementById("linksWithParams");
   const resultsDiv = document.getElementById("results");
+  const exposedFilesResultsDiv = document.getElementById("exposedFilesResults");
 
   // --- Helper to escape HTML safely ---
   function escapeHTML(str) {
@@ -35,19 +36,30 @@ document.addEventListener("DOMContentLoaded", async () => {
         loadFoundLinks();
         loadHomeSecrets();
       }
+      if (target === "exposed") {
+        loadExposedFiles();
+      }
       if (target === "params") fetchLinksWithParams();
     });
   });
 
-  // --- Deduplicate helper ---
-  function dedupeResults(arr) {
-    const seen = new Set();
-    return arr.filter(item => {
-      const key = `${item.url}|${item.keyword}|${item.lineNum}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
+  // --- Grouping helper for keywords ---
+  function groupKeywordResults(results) {
+    const grouped = {};
+    results.forEach(item => {
+      const key = `${item.keyword}|${item.url}`;
+      if (!grouped[key]) {
+        grouped[key] = {
+          keyword: item.keyword,
+          url: item.url,
+          lineNums: new Set(),
+          count: 0
+        };
+      }
+      grouped[key].lineNums.add(item.lineNum);
+      grouped[key].count++;
     });
+    return Object.values(grouped);
   }
 
   // --- Load Found Keyword Links (current site only) ---
@@ -66,15 +78,15 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
       });
 
-      const deduped = dedupeResults(found);
+      const groupedResults = groupKeywordResults(found);
 
-      if (deduped.length === 0) {
+      if (groupedResults.length === 0) {
         resultsDiv.textContent = "No keyword matches found yet.";
         return;
       }
 
       resultsDiv.innerHTML = "";
-      deduped.forEach(item => {
+      groupedResults.forEach(group => {
         const div = document.createElement("div");
         div.className = "keyword-item";
         div.style.marginBottom = "10px";
@@ -84,9 +96,9 @@ document.addEventListener("DOMContentLoaded", async () => {
         div.style.padding = "8px";
         div.style.boxShadow = "0 1px 3px rgba(0,0,0,0.1)";
         div.innerHTML = `
-          <b>${escapeHTML(item.keyword)}</b><br>
-          <a href="${escapeHTML(item.url)}" target="_blank">${escapeHTML(item.url)}</a><br>
-          <small>Line: ${item.lineNum}</small>
+          <b>${escapeHTML(group.keyword)}</b> (${group.count} appearances)<br>
+          <a href="${escapeHTML(group.url)}" target="_blank">${escapeHTML(group.url)}</a><br>
+          <small>Lines: ${[...group.lineNums].sort((a, b) => a - b).join(', ')}</small>
         `;
         resultsDiv.appendChild(div);
       });
@@ -109,7 +121,6 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
       });
 
-      // Deduplicate secrets also
       const deduped = matches.filter(
         (v, i, a) =>
           a.findIndex(
@@ -138,15 +149,11 @@ document.addEventListener("DOMContentLoaded", async () => {
 
      let link = item.fileUrl || item.pageUrl || "#";
 		try {
-		  // If it's a relative path like /main.js or main.js
 		  const u = new URL(link, tab.url);
 		  link = u.href;
 		} catch {
-		  // fallback in case something breaks
 		  link = tab.url;
 		}
-
-
 
         html += `
           <div style="
@@ -186,20 +193,42 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
+  // --- Load Exposed Files ---
+  function loadExposedFiles() {
+    exposedFilesResultsDiv.innerHTML = "Loading...";
+    const domainKey = `exposedFiles_${currentDomain}`;
+
+    chrome.storage.local.get([domainKey], (data) => {
+      const findings = data[domainKey] || [];
+
+      if (findings.length === 0) {
+        exposedFilesResultsDiv.textContent = "No exposed files found yet.";
+        return;
+      }
+
+      exposedFilesResultsDiv.innerHTML = "";
+      findings.forEach(item => {
+        const div = document.createElement("div");
+        div.className = "exposed-item";
+        div.style.marginBottom = "10px";
+        div.style.background = "#fff";
+        div.style.border = "1px solid #ddd";
+        div.style.borderRadius = "8px";
+        div.style.padding = "8px";
+        div.style.boxShadow = "0 1px 3px rgba(0,0,0,0.1)";
+        div.innerHTML = `
+          <b>${escapeHTML(item.type.toUpperCase())}</b> found at:<br>
+          <a href="${escapeHTML(item.url)}" target="_blank">${escapeHTML(item.url)}</a>
+        `;
+        exposedFilesResultsDiv.appendChild(div);
+      });
+    });
+  }
+
   // --- Initial Load on Popup Open ---
   loadFoundLinks();
   loadHomeSecrets();
-
-  // --- Refresh Button ---
-  const refreshBtn = document.createElement("button");
-  refreshBtn.textContent = "🔄 Refresh";
-  refreshBtn.style.marginBottom = "10px";
-  refreshBtn.addEventListener("click", () => {
-    loadFoundLinks();
-    loadHomeSecrets();
-  });
-  const homeHeader = document.querySelector("#home h2");
-  if (homeHeader) homeHeader.insertAdjacentElement("afterend", refreshBtn);
+  loadExposedFiles();
 
   // --- Settings + Toggles ---
   const keywordsInput = document.getElementById("keywords");
@@ -213,6 +242,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   const siteToggle = document.getElementById("siteToggle");
   const siteLabel = document.getElementById("siteLabel");
 
+  const customFileInput = document.getElementById("customFile");
+  const addCustomFileBtn = document.getElementById("addCustomFile");
+  const customFilesListDiv = document.getElementById("customFilesList");
+
   if (tab.url && tab.url.startsWith("http")) {
     siteLabel.textContent = `Turn ON for: ${currentDomain}`;
   }
@@ -222,7 +255,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     siteToggle.checked = !!activeSites[currentDomain];
   });
 
-  // ✅ Toggle logic (fresh scan trigger)
   siteToggle.addEventListener("change", async () => {
     const { activeSites = {} } = await chrome.storage.local.get("activeSites");
 
@@ -249,15 +281,18 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   // --- Settings save/load ---
-  chrome.storage.local.get(["keywords", "notifyMode", "maxLinks"], (data) => {
+  chrome.storage.local.get(["keywords", "notifyMode", "maxLinks", "customFiles"], (data) => {
     if (data.notifyMode) notifyModeSelect.value = data.notifyMode;
     if (data.maxLinks) maxLinksSelect.value = data.maxLinks;
+
+    displayCustomFiles(data.customFiles || []);
   });
 
   saveBtn.addEventListener("click", () => {
     const newKeywords = keywordsInput.value
       ? keywordsInput.value.split(",").map(k => k.trim()).filter(Boolean)
       : [];
+
     chrome.storage.local.get(["keywords"], (data) => {
       let keywords = data.keywords || [];
       newKeywords.forEach(k => {
@@ -275,6 +310,70 @@ document.addEventListener("DOMContentLoaded", async () => {
       });
     });
   });
+
+  // --- Custom Files ---
+  function displayCustomFiles(files) {
+    customFilesListDiv.innerHTML = "";
+    if (!files || files.length === 0) {
+      customFilesListDiv.textContent = "No custom files added.";
+      return;
+    }
+
+    const list = document.createElement("ul");
+    list.style.paddingLeft = "0";
+    list.style.listStyle = "none";
+
+    files.forEach((file) => {
+      const li = document.createElement("li");
+      li.style.display = "flex";
+      li.style.justifyContent = "space-between";
+      li.style.alignItems = "center";
+      li.style.marginBottom = "5px";
+      li.style.borderBottom = "1px solid #ccc";
+      li.style.padding = "2px 0";
+
+      const span = document.createElement("span");
+      span.textContent = file;
+
+      const delBtn = document.createElement("span");
+      delBtn.textContent = "X";
+      delBtn.style.color = "red";
+      delBtn.style.cursor = "pointer";
+      delBtn.style.marginLeft = "10px";
+      delBtn.style.fontWeight = "bold";
+      delBtn.title = "Delete file";
+
+      delBtn.addEventListener("click", () => {
+        const updatedFiles = files.filter(f => f !== file);
+        chrome.storage.local.set({ customFiles: updatedFiles }, () => {
+          displayCustomFiles(updatedFiles);
+        });
+      });
+
+      li.appendChild(span);
+      li.appendChild(delBtn);
+      list.appendChild(li);
+    });
+
+    customFilesListDiv.appendChild(list);
+  }
+
+  addCustomFileBtn.addEventListener("click", () => {
+    const newFile = customFileInput.value.trim();
+    if (newFile) {
+      chrome.storage.local.get(["customFiles"], (data) => {
+        let files = data.customFiles || [];
+        if (!files.includes(newFile)) {
+          files.push(newFile);
+          chrome.storage.local.set({ customFiles: files }, () => {
+            displayCustomFiles(files);
+            customFileInput.value = "";
+          });
+        }
+      });
+    }
+  });
+
 
   // --- Show/Remove Keywords ---
   function displayKeywords() {
@@ -326,20 +425,12 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // --- Clear All Found Links (current site only) ---
   clearAllBtn.addEventListener("click", () => {
-    chrome.storage.local.get(["foundResults"], (data) => {
-      const foundAll = data.foundResults || [];
-      const remaining = foundAll.filter(item => {
-        try {
-          return new URL(item.url).hostname !== currentDomain;
-        } catch {
-          return true;
-        }
-      });
-      chrome.storage.local.set({ foundResults: remaining }, () => {
-        resultsDiv.innerHTML = "";
-        status.textContent = "Cleared data for this site!";
-        setTimeout(() => (status.textContent = ""), 2000);
-      });
+    chrome.runtime.sendMessage({ cmd: "resetDomain", domain: currentDomain }, () => {
+      loadFoundLinks();
+      loadHomeSecrets();
+      loadExposedFiles();
+      status.textContent = "Cleared data for this site!";
+      setTimeout(() => (status.textContent = ""), 2000);
     });
   });
 
@@ -379,6 +470,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // --- Live auto-refresh ---
   chrome.storage.onChanged.addListener((changes) => {
-    if (changes.foundResults) loadFoundLinks();
+    const domainKey = `exposedFiles_${currentDomain}`;
+    if (changes.foundResults || changes[domainKey]) {
+      loadFoundLinks();
+      loadExposedFiles();
+    }
   });
 });

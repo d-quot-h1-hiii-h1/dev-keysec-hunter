@@ -1,5 +1,4 @@
-// background.js — full working version (keywords + secrets + live refresh)
-// UPDATED: fixes inflated secret notification counts
+// background.js - Refactored for maintainability
 
 const scannedMap = new Map();
 
@@ -11,8 +10,7 @@ async function loadRegexList() {
     const txt = await r.text();
     try {
       const parsed = JSON.parse(txt);
-      if (Array.isArray(parsed)) return parsed.map(e => [e.name, e.pattern]);
-      else return Object.entries(parsed);
+      return Array.isArray(parsed) ? parsed.map(e => [e.name, e.pattern]) : Object.entries(parsed);
     } catch (e) {
       console.error("Failed to parse regax.txt as JSON", e);
       return [];
@@ -25,7 +23,7 @@ async function loadRegexList() {
 
 // --- Deduplicate found results (merge helper) ---
 function dedupeAndMerge(prev = [], found = []) {
-  const out = prev.slice();
+  const out = [...prev];
   for (const f of found) {
     const exists = out.some(p =>
       p.name === f.name &&
@@ -44,10 +42,12 @@ function markScanned(domain, tabId) {
   set.add(tabId);
   scannedMap.set(domain, set);
 }
+
 function isScanned(domain, tabId) {
   const set = scannedMap.get(domain);
   return set ? set.has(tabId) : false;
 }
+
 chrome.tabs.onRemoved.addListener(tabId => {
   for (const [domain, set] of scannedMap.entries()) {
     if (set.has(tabId)) {
@@ -57,299 +57,243 @@ chrome.tabs.onRemoved.addListener(tabId => {
   }
 });
 
+/**
+ * Injected content scanner function.
+ * This runs in the context of the target page.
+ */
+async function contentScanner(scanType, patterns, maxLinksArg) {
+  const origin = location.origin;
+  const visited = new Set();
+  const toVisit = [location.href];
+  const results = [];
+  const SAFETY_CAP = 1000;
+  const limit = maxLinksArg === "all" ? SAFETY_CAP : parseInt(maxLinksArg, 10) || 10;
+
+  async function fetchText(url) {
+    try {
+      const r = await fetch(url, { credentials: "include" });
+      return r.ok ? await r.text() : "";
+    } catch {
+      return "";
+    }
+  }
+
+  function extractLinksAndScripts(html, baseUrl) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, "text/html");
+    const getUrl = (node, attr) => {
+      try { return new URL(node[attr], baseUrl).href; } catch { return null; }
+    };
+    const links = [...doc.querySelectorAll("a[href]")].map(a => getUrl(a, 'href')).filter(u => u && u.startsWith(origin));
+    const scripts = [...doc.querySelectorAll("script[src]")].map(s => getUrl(s, 'src')).filter(u => u && u.startsWith(origin));
+    return { links: [...new Set(links)], scripts: [...new Set(scripts)] };
+  }
+
+  function recordMatches(text, pageUrl, fileUrl) {
+    if (scanType === 'keyword') {
+      for (const kw of patterns) {
+        if (text.toLowerCase().includes(kw.toLowerCase())) {
+          text.split("\n").forEach((line, i) => {
+            if (line.toLowerCase().includes(kw.toLowerCase())) {
+              results.push({ keyword: kw, url: fileUrl, line: line.trim(), lineNum: i + 1 });
+            }
+          });
+        }
+      }
+    } else if (scanType === 'secret') {
+      for (const [name, pattern] of patterns) {
+        try {
+          const re = new RegExp(pattern, "gi");
+          let m;
+          while ((m = re.exec(text)) !== null) {
+            results.push({ name, match: m[0], pageUrl, fileUrl });
+            if (m.index === re.lastIndex) re.lastIndex++;
+          }
+        } catch {}
+      }
+    }
+  }
+
+  while (toVisit.length && visited.size < limit && visited.size < SAFETY_CAP) {
+    const pageUrl = toVisit.shift();
+    if (!pageUrl || visited.has(pageUrl)) continue;
+    visited.add(pageUrl);
+
+    const html = await fetchText(pageUrl);
+    if (!html) continue;
+    recordMatches(html, pageUrl, pageUrl);
+
+    const { links, scripts } = extractLinksAndScripts(html, pageUrl);
+
+    for (const js of scripts) {
+      try {
+        const jsText = await fetchText(js);
+        if (jsText) recordMatches(jsText, pageUrl, js);
+      } catch (e) {
+        console.warn("⚠️ JS fetch failed:", js, e);
+      }
+    }
+
+    for (const l of links) {
+      if (!visited.has(l) && !toVisit.includes(l)) toVisit.push(l);
+    }
+  }
+  return results;
+}
+
+// --- Unified scanning execution ---
+async function executeScan(tabId, scanType, patterns, maxLinks) {
+  if (!patterns || patterns.length === 0) return [];
+
+  try {
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: contentScanner,
+      args: [scanType, patterns, maxLinks],
+    });
+    return Array.isArray(result) ? result : [];
+  } catch (err) {
+      console.error(`Error during ${scanType} scan:`, err);
+      return [];
+  }
+}
+
+// --- Exposed File Scanning ---
+async function checkExposedFile(url, path) {
+  const to_check = url + path;
+  try {
+    const response = await fetch(to_check, { method: 'HEAD', redirect: 'manual' });
+    if (response.status !== 404) {
+      return { type: path.substring(1), url: to_check };
+    }
+  } catch (error) {
+    // Ignore error
+  }
+  return null;
+}
+
 // --- Main scanning trigger ---
 chrome.webNavigation.onCompleted.addListener(async details => {
+  if (details.frameId !== 0 || !details.url.startsWith("http")) return;
+
+  const domain = new URL(details.url).hostname;
+  const tabId = details.tabId;
+  const url = details.url;
+
   try {
-    if (details.frameId !== 0 || !details.url.startsWith("http")) return;
-
-    const domain = new URL(details.url).hostname;
-    const tabId = details.tabId;
-
-    const data = await new Promise(res => chrome.storage.local.get(
-      ["keywords", "notifyMode", "foundResults", "maxLinks", "activeSites"],
-      res
-    ));
-
-    const keywords = data.keywords || [];
-    const notifyMode = data.notifyMode || "notification";
-    const maxLinks = data.maxLinks || "10";
-    const activeSites = data.activeSites || {};
-    let foundResults = data.foundResults || [];
+    const data = await chrome.storage.local.get(["keywords", "notifyMode", "foundResults", "maxLinks", "activeSites", "customFiles"]);
+    const { keywords = [], notifyMode = "notification", maxLinks = "10", activeSites = {}, foundResults = [], customFiles = [] } = data;
 
     if (!activeSites[domain]) {
-      // if toggle is OFF → clear site data and skip
-      await new Promise(r => chrome.storage.local.remove(`secretsFound_${domain}`, r));
+      await chrome.storage.local.remove(`secretsFound_${domain}`);
+      await chrome.storage.local.remove(`exposedFiles_${domain}`);
       return;
     }
 
-
-
-
-
-
-
-
-   // --- KEYWORD SCANNING ---
-try {
-  if (keywords.length > 0) {  // ✅ Always scan, even if notifications are disabled
-    const [{ result: scanResult }] = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: async (keywordsArg, maxLinksArg) => {
-        const origin = location.origin;
-        const visited = new Set();
-        const toVisit = [location.href];
-        const results = [];
-        const SAFETY_CAP = 1000;
-        const limit = maxLinksArg === "all" ? SAFETY_CAP : parseInt(maxLinksArg, 10) || 10;
-
-        async function fetchText(url) {
-          try {
-            const r = await fetch(url, { credentials: "include" });
-            if (!r.ok) return "";
-            return await r.text();
-          } catch {
-            return "";
-          }
-        }
-
-        function extractLinksAndScripts(html, baseUrl) {
-          const parser = new DOMParser();
-          const doc = parser.parseFromString(html, "text/html");
-          const links = Array.from(doc.querySelectorAll("a[href]"))
-            .map(a => {
-              try { return new URL(a.href, baseUrl).href; } catch { return null; }
-            })
-            .filter(Boolean)
-            .filter(u => u.startsWith(origin));
-          const scripts = Array.from(doc.querySelectorAll("script[src]"))
-            .map(s => {
-              try { return new URL(s.src, baseUrl).href; } catch { return null; }
-            })
-            .filter(Boolean)
-            .filter(u => u.startsWith(origin));
-          return { links: [...new Set(links)], scripts: [...new Set(scripts)] };
-        }
-
-        function recordMatches(text, url) {
-          for (const kw of keywordsArg) {
-            if (text.toLowerCase().includes(kw.toLowerCase())) {
-              const lines = text.split("\n");
-              lines.forEach((line, i) => {
-                if (line.toLowerCase().includes(kw.toLowerCase()))
-                  results.push({ keyword: kw, url, line: line.trim(), lineNum: i + 1 });
-              });
-            }
-          }
-        }
-
-        while (toVisit.length && visited.size < limit && visited.size < SAFETY_CAP) {
-          const pageUrl = toVisit.shift();
-          if (!pageUrl || visited.has(pageUrl)) continue;
-          visited.add(pageUrl);
-
-          const html = await fetchText(pageUrl);
-          if (!html) continue;
-          recordMatches(html, pageUrl);
-
-          const { links, scripts } = extractLinksAndScripts(html, pageUrl);
-
-          for (const js of scripts) {
-            try {
-              const jsText = await fetchText(js);
-              if (jsText) recordMatches(jsText, js);
-            } catch (e) {
-              console.warn("⚠️ JS fetch failed:", js, e);
-            }
-          }
-
-          for (const l of links)
-            if (!visited.has(l) && !toVisit.includes(l)) toVisit.push(l);
-        }
-
-        return results;
-      },
-      args: [keywords, maxLinks]
-    });
-
-    const matches = Array.isArray(scanResult) ? scanResult : [];
-
-    if (matches.length > 0) {
-      foundResults = dedupeAndMerge(foundResults, matches);
+    // --- KEYWORD SCANNING ---
+    const keywordMatches = await executeScan(tabId, 'keyword', keywords, maxLinks);
+    if (keywordMatches.length > 0) {
+      const mergedKeywords = dedupeAndMerge(foundResults, keywordMatches);
       const domainKey = `keywordsFound_${domain}`;
-      await chrome.storage.local.set({
-        foundResults,
-        [domainKey]: matches
-      });
+      await chrome.storage.local.set({ foundResults: mergedKeywords, [domainKey]: keywordMatches });
 
       chrome.runtime.sendMessage({ cmd: "refreshKeywords", domain });
 
-      // ✅ Only show notifications if enabled
       if (notifyMode !== "disabled") {
-        let msg = matches.slice(0, 3).map(m => `${m.keyword} @ ${m.url}`).join("\n");
-        if (matches.length > 3) msg += `\n+${matches.length - 3} more...`;
+        let msg = keywordMatches.slice(0, 3).map(m => `${m.keyword} @ ${m.url}`).join("\n");
+        if (keywordMatches.length > 3) msg += `\n+${keywordMatches.length - 3} more...`;
 
         if (notifyMode === "notification") {
           chrome.notifications.create({
-            type: "basic",
-            iconUrl: "icon.png",
-            title: "HTML_search keywords found",
-            message: msg,
-            priority: 2,
-            requireInteraction: true
+            type: "basic", iconUrl: "icon.png", title: "HTML_search keywords found",
+            message: msg, priority: 2, requireInteraction: true,
           });
         } else if (notifyMode === "alert") {
           chrome.scripting.executeScript({
             target: { tabId },
             func: msg => alert("HTML_search:\n" + msg),
-            args: [msg]
+            args: [msg],
           });
         }
       }
     }
-  }
-} catch (err) {
-  console.error("Keyword scan error:", err);
-}
 
-    // --- SECRET SCANNING (fixed counting) ---
-    try {
-      if (isScanned(domain, tabId)) return;
-
-      // NOTE: DO NOT remove the stored secrets here — only clear when user toggles reset.
+    // --- SECRET SCANNING ---
+    if (!isScanned(domain, tabId)) {
       const regexEntries = await loadRegexList();
-      if (!regexEntries.length) {
-        markScanned(domain, tabId);
-        return;
-      }
+      const secretMatches = await executeScan(tabId, 'secret', regexEntries, maxLinks);
 
-      const [{ result: scanResult }] = await chrome.scripting.executeScript({
-        target: { tabId },
-        func: async (regexEntriesArg, maxLinksArg) => {
-          async function fetchText(url) {
-            try {
-              const r = await fetch(url, { credentials: "include" });
-              if (!r.ok) return "";
-              return await r.text();
-            } catch {
-              return "";
-            }
-          }
+      if (secretMatches.length > 0) {
+        const dedupedSecrets = dedupeAndMerge([], secretMatches);
+        const domainKey = `secretsFound_${domain}`;
+        const { [domainKey]: oldSecrets = [] } = await chrome.storage.local.get(domainKey);
 
-          function extractLinksAndScripts(html, baseUrl) {
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(html, "text/html");
-            const links = Array.from(doc.querySelectorAll("a[href]"))
-              .map(a => {
-                try { return new URL(a.href, baseUrl).href; } catch { return null; }
-              })
-              .filter(Boolean)
-              .filter(u => u.startsWith(location.origin));
-            const scripts = Array.from(doc.querySelectorAll("script[src]"))
-              .map(s => {
-                try { return new URL(s.src, baseUrl).href; } catch { return null; }
-              })
-              .filter(Boolean)
-              .filter(u => u.startsWith(location.origin));
-            return { links: [...new Set(links)], scripts: [...new Set(scripts)] };
-          }
-
-          const SAFETY_CAP = 1000;
-          const visited = new Set();
-          const toVisit = [location.href];
-          const results = [];
-          const limit = maxLinksArg === "all" ? SAFETY_CAP : parseInt(maxLinksArg, 10) || 10;
-
-          while (toVisit.length && visited.size < limit && visited.size < SAFETY_CAP) {
-            const pageUrl = toVisit.shift();
-            if (!pageUrl || visited.has(pageUrl)) continue;
-            visited.add(pageUrl);
-
-            const html = await fetchText(pageUrl);
-            if (!html) continue;
-
-            for (const [name, pattern] of regexEntriesArg) {
-              let re; try { re = new RegExp(pattern, "gi"); } catch { continue; }
-              let m;
-              while ((m = re.exec(html)) !== null) {
-                results.push({ name, match: m[0], pageUrl, fileUrl: pageUrl });
-                if (m.index === re.lastIndex) re.lastIndex++;
-              }
-            }
-
-            const { links, scripts } = extractLinksAndScripts(html, pageUrl);
-
-            for (const js of scripts) {
-              try {
-                const jsText = await fetchText(js);
-                for (const [name, pattern] of regexEntriesArg) {
-                  let re; try { re = new RegExp(pattern, "gi"); } catch { continue; }
-                  let m;
-                  while ((m = re.exec(jsText)) !== null) {
-                    results.push({ name, match: m[0], pageUrl, fileUrl: js });
-                    if (m.index === re.lastIndex) re.lastIndex++;
-                  }
-                }
-              } catch {}
-            }
-
-            for (const l of links)
-              if (!visited.has(l) && !toVisit.includes(l)) toVisit.push(l);
-          }
-
-          return results;
-        },
-        args: [regexEntries, maxLinks]
-      });
-
-      // Normalize foundSecrets (array)
-      let foundSecrets = Array.isArray(scanResult) ? scanResult : [];
-
-      // Deduplicate the fresh scan results first (by name+match+fileUrl)
-      foundSecrets = dedupeAndMerge([], foundSecrets);
-
-      const domainKey = `secretsFound_${domain}`;
-      const prevData = await new Promise(res => chrome.storage.local.get(domainKey, res));
-      const oldSecrets = prevData[domainKey] || [];
-
-      // Build list of truly new unique secrets (not present in oldSecrets)
-      const uniqueNewSecrets = foundSecrets.filter(f => {
-        return !oldSecrets.some(o =>
-          o.name === f.name && o.match === f.match && o.fileUrl === f.fileUrl
+        const uniqueNewSecrets = dedupedSecrets.filter(f =>
+          !oldSecrets.some(o => o.name === f.name && o.match === f.match && o.fileUrl === f.fileUrl)
         );
-      });
 
-      // Merge and persist (old + new unique ones)
-      const merged = dedupeAndMerge(oldSecrets, foundSecrets);
-      await chrome.storage.local.set({ [domainKey]: merged });
+        const mergedSecrets = dedupeAndMerge(oldSecrets, dedupedSecrets);
+        await chrome.storage.local.set({ [domainKey]: mergedSecrets });
 
-      // Use count of truly new unique secrets for notifications
-      const newCount = uniqueNewSecrets.length;
-
-      if (newCount > 0) {
-        const msg = `${newCount} new unique secret(s) found on ${domain}`;
-        if (notifyMode === "notification") {
-          chrome.notifications.create({
-            type: "basic",
-            iconUrl: "icon.png",
-            title: "🔑 Secrets Found",
-            message: msg,
-            priority: 2
-          });
-        } else if (notifyMode === "alert") {
-          chrome.scripting.executeScript({
-            target: { tabId },
-            func: msg => alert(msg),
-            args: [msg]
-          });
+        const newCount = uniqueNewSecrets.length;
+        if (newCount > 0) {
+          const msg = `${newCount} new unique secret(s) found on ${domain}`;
+          if (notifyMode === "notification") {
+            chrome.notifications.create({
+              type: "basic", iconUrl: "icon.png", title: "🔑 Secrets Found",
+              message: msg, priority: 2,
+            });
+          } else if (notifyMode === "alert") {
+            chrome.scripting.executeScript({
+              target: { tabId },
+              func: msg => alert(msg),
+              args: [msg],
+            });
+          }
         }
       }
+    }
 
-      markScanned(domain, tabId);
+    // --- EXPOSED FILE SCANNING ---
+    const origin = new URL(url).origin;
+    const checksToRun = [];
+
+    customFiles.forEach(file => {
+      const path = file.startsWith('/') ? file : `/${file}`;
+      checksToRun.push(checkExposedFile(origin, path));
+    });
+
+    const exposedFileResults = (await Promise.all(checksToRun)).filter(Boolean);
+
+    if (exposedFileResults.length > 0) {
+      const domainKey = `exposedFiles_${domain}`;
+      const { [domainKey]: oldExposedFiles = [] } = await chrome.storage.local.get(domainKey);
+      const newExposedFiles = exposedFileResults.filter(f => !oldExposedFiles.some(o => o.url === f.url));
+
+      if (newExposedFiles.length > 0) {
+        const mergedExposedFiles = [...oldExposedFiles, ...newExposedFiles];
+        await chrome.storage.local.set({ [domainKey]: mergedExposedFiles });
+
+        if (notifyMode !== "disabled") {
+          const msg = `${newExposedFiles.length} new exposed file(s) found on ${domain}`;
+          if (notifyMode === "notification") {
+            chrome.notifications.create({
+              type: "basic", iconUrl: "icon.png", title: "📁 Exposed Files Found",
+              message: msg, priority: 2,
+            });
+          } else if (notifyMode === "alert") {
+            chrome.scripting.executeScript({
+              target: { tabId },
+              func: msg => alert(msg),
+              args: [msg],
+            });
+          }
+        }
+      }
     }
-	catch (err) {
-      console.error("Secret scan error:", err);
-      markScanned(domain, tabId);
-    }
+
+    markScanned(domain, tabId);
+
   } catch (err) {
     console.error("background onCompleted error:", err);
   }
@@ -357,13 +301,14 @@ try {
 
 // --- Reset domain scan ---
 function resetDomainScan(domain) {
-  if (scannedMap.has(domain)) scannedMap.delete(domain);
-  const domainKey = `secretsFound_${domain}`;
-  const keyKw = `keywordsFound_${domain}`;
-  chrome.storage.local.remove([domainKey, keyKw]);
-  chrome.storage.local.get(["foundResults"], d => {
-    const found = d.foundResults || [];
-    const filtered = found.filter(f => {
+  scannedMap.delete(domain);
+  const secretsKey = `secretsFound_${domain}`;
+  const keywordsKey = `keywordsFound_${domain}`;
+  const exposedFilesKey = `exposedFiles_${domain}`;
+  chrome.storage.local.remove([secretsKey, keywordsKey, exposedFilesKey]);
+
+  chrome.storage.local.get("foundResults", d => {
+    const filtered = (d.foundResults || []).filter(f => {
       try { return new URL(f.url).hostname !== domain; } catch { return true; }
     });
     chrome.storage.local.set({ foundResults: filtered });
@@ -377,4 +322,5 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     sendResponse({ ok: true });
     return true;
   }
+  return false;
 });
