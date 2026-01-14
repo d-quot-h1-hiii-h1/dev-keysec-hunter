@@ -34,6 +34,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (target === "home") {
         loadFoundLinks();
         loadHomeSecrets();
+        loadTechResults();
       }
       if (target === "params") fetchLinksWithParams();
     });
@@ -186,9 +187,35 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
+  // --- Load Detected Technology ---
+  function loadTechResults() {
+    const techDiv = document.getElementById("tech-results");
+    techDiv.innerHTML = "Detecting...";
+    const domainKey = `techFound_${currentDomain}`;
+    chrome.storage.local.get([domainKey], (data) => {
+      const matches = data[domainKey] || [];
+      if (matches.length === 0) {
+        techDiv.textContent = "No specific technology detected.";
+        return;
+      }
+      let html = "";
+      for (const item of matches) {
+        html += `
+          <div>
+            <b>Technology:</b> ${escapeHTML(item.name)}<br>
+            <b>Template Engine:</b> ${escapeHTML(item.engine)}<br>
+            <b>SSTI Possible! Try Payload:</b> <code>${escapeHTML(item.payload)}</code>
+          </div>
+        `;
+      }
+      techDiv.innerHTML = html;
+    });
+  }
+
   // --- Initial Load on Popup Open ---
   loadFoundLinks();
   loadHomeSecrets();
+  loadTechResults();
 
   // --- Refresh Button ---
   const refreshBtn = document.createElement("button");
@@ -197,6 +224,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   refreshBtn.addEventListener("click", () => {
     loadFoundLinks();
     loadHomeSecrets();
+    loadTechResults();
   });
   const homeHeader = document.querySelector("#home h2");
   if (homeHeader) homeHeader.insertAdjacentElement("afterend", refreshBtn);

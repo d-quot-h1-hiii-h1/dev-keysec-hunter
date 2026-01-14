@@ -317,3 +317,11 @@ input:checked + .slider:before {
   font-size: 0.9em;
   color: #555;
 }
+
+#tech-info {
+  margin-bottom: 15px;
+  padding: 10px;
+  background: #f0f7ff;
+  border: 1px solid #cce5ff;
+  border-radius: 8px;
+}

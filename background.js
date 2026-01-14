@@ -23,6 +23,18 @@ async function loadRegexList() {
   }
 }
 
+// --- Load tech signatures ---
+async function loadTechSignatures() {
+  try {
+    const url = chrome.runtime.getURL("tech_signatures.json");
+    const r = await fetch(url);
+    return await r.json();
+  } catch (err) {
+    console.error("Failed to fetch tech_signatures.json", err);
+    return [];
+  }
+}
+
 // --- Deduplicate found results (merge helper) ---
 function dedupeAndMerge(prev = [], found = []) {
   const out = prev.slice();
@@ -80,6 +92,51 @@ chrome.webNavigation.onCompleted.addListener(async details => {
       // if toggle is OFF → clear site data and skip
       await new Promise(r => chrome.storage.local.remove(`secretsFound_${domain}`, r));
       return;
+    }
+
+    // --- TECHNOLOGY DETECTION ---
+    try {
+      const techSignatures = await loadTechSignatures();
+      if (techSignatures.length > 0) {
+        const [{ result: techScanResult }] = await chrome.scripting.executeScript({
+          target: { tabId },
+          func: async (signatures) => {
+            const results = [];
+            const headers = await fetch(location.href).then(res => res.headers);
+            const cookies = document.cookie;
+
+            for (const sig of signatures) {
+              if (sig.type === "header") {
+                const headerValue = headers.get(sig.header);
+                if (headerValue && new RegExp(sig.pattern, "i").test(headerValue)) {
+                  results.push({
+                    name: sig.name,
+                    engine: sig.engine,
+                    payload: sig.payload,
+                  });
+                }
+              } else if (sig.type === "cookie") {
+                if (new RegExp(sig.cookie + "=", "i").test(cookies)) {
+                   results.push({
+                    name: sig.name,
+                    engine: sig.engine,
+                    payload: sig.payload,
+                  });
+                }
+              }
+            }
+            return results;
+          },
+          args: [techSignatures]
+        });
+
+        if (Array.isArray(techScanResult) && techScanResult.length > 0) {
+          const domainKey = `techFound_${domain}`;
+          await chrome.storage.local.set({ [domainKey]: techScanResult });
+        }
+      }
+    } catch (err) {
+      console.error("Technology detection error:", err);
     }
 
 
@@ -360,7 +417,8 @@ function resetDomainScan(domain) {
   if (scannedMap.has(domain)) scannedMap.delete(domain);
   const domainKey = `secretsFound_${domain}`;
   const keyKw = `keywordsFound_${domain}`;
-  chrome.storage.local.remove([domainKey, keyKw]);
+  const techKey = `techFound_${domain}`;
+  chrome.storage.local.remove([domainKey, keyKw, techKey]);
   chrome.storage.local.get(["foundResults"], d => {
     const found = d.foundResults || [];
     const filtered = found.filter(f => {
